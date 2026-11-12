@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import shutil
+from pathlib import Path
 
 import pytest
 
@@ -16,6 +17,12 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     for item in items:
         if "ocr" in item.keywords:
             item.add_marker(marker)
+
+
+@pytest.fixture(scope="session")
+def fixtures() -> Path:
+    """Directory of the committed fixtures (resolved lazily, never at import time)."""
+    return Path(__file__).resolve().parent / "fixtures"
 
 
 @pytest.fixture
