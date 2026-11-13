@@ -5,6 +5,7 @@ Convert class of the `sk-metodika` package (open-lex-it, phase 81b). Reads the g
 
 - Protocol 1.1 stdin class: actions `execute` and `terminate` (`manifest.json`). Params `items`, `dirIn`, `dirOut`; settings `maxDocs`, `only` (`{section|site, docId}`, docId = source_id), `dryRun`; every other Source key may arrive as JSON null and is ignored.
 - Text: pypdfium2 text layer (NFC, no-break spaces and soft hyphens normalised, page-number lines at page edges dropped); below 200 characters local tesseract `slk` at 200 dpi (`text_source` = `ocr`). Spike numbers: `tasks/81b-dp-sk-metodika/spike-p81b-07.md` in the umbrella repo.
+- Identity: `source_id` is taken from the grab sidecar only and never recomputed (the URL-to-id rule lives in the grab class alone; live fix P81b-34).
 - Metadata wins: `numero`, `anno`, `data`, `oggetto` come from the grab sidecar; the text may only fill an empty year and never overwrites. A text that names another number or year is a plan warning (`<source_id>: ...`).
 - Skipped reasons: `not_a_pdf` (magic bytes `%PDF-`, also an unparsable file), `no_pdf`, `too_large` (> 40 MB), `ocr_empty`, `ocr_unavailable`, `ocr_failed`, `bad_sidecar`, `convert_failed`, and the entry rejects `missing_fonte`, `missing_source_id`, `unsafe_source_id`, `missing_text`. Reasons the grab recorded in `_coverage.json` are carried over.
 - The plan is deterministic (sorted keys, no clock): two runs give the same bytes.
