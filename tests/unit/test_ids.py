@@ -1,54 +1,20 @@
-"""source_id: one rule shared (by copy) with the grab class. Identity comes from the unique URL path, never from the file stem (P81b-05)."""
+"""source_id in the convert class: trusted from the grab sidecar, only checked for safety (P81b-05, live fix P81b-34).
+
+The URL-to-id rule lives in the grab class alone (``dp_sk_metodika_grab.ids``); here nothing is recomputed.
+"""
 from __future__ import annotations
 
+import inspect
 import json
-import re
 from pathlib import Path
-from urllib.parse import urlparse
+from typing import Any
 
 import pytest
 
-from dp_sk_metodika_convert import ids
+from dp_sk_metodika_convert import ids, plan, sidecar
+from dp_sk_metodika_convert.entry import Entry, build_entry
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize(
-    ("url", "expected"),
-    [
-        ("https://www.mfsr.sk/files/archiv/35/Priloha_c_1.pdf", "files_archiv_35_Priloha_c_1"),
-        ("https://www.uvo.gov.sk/extdoc/53262", "extdoc_53262"),
-        ("https://nbs.sk/dokument/0a1b2c3d-1111-2222-3333-444455556666/stiahnut?force=false?force=false", "dokument_0a1b2c3d-1111-2222-3333-444455556666"),
-        (
-            "https://www.uvo.gov.sk/fileadmin/dokumenty/vykladove_stanoviska/2015/vykladove_stanovisko_1-2021.pdf",
-            "fileadmin_dokumenty_vykladove_stanoviska_2015_vykladove_stanovisko_1-2021",
-        ),
-        (
-            "https://www.financnasprava.sk//_img/pfsedit/Dokumenty_PFS/Zverejnovanie_dok/Dane/Zavery_zo_zasadani/2014/2014.05.09_Zapis_metodika_dane_z_prijmov.pdf",
-            "Dane_Zavery_zo_zasadani_2014_2014.05.09_Zapis_metodika_dane_z_prijmov",
-        ),
-        ("https://nbs.sk/_img/Documents/_Dohlad/Metodicke/stanovisko_2020.pdf?x=1#frag", "Documents__Dohlad_Metodicke_stanovisko_2020"),
-    ],
-)
-def test_should_slug_the_url_path_below_the_host(url: str, expected: str) -> None:
-    assert ids.source_id_from_url(url) == expected
-
-
-@pytest.mark.unit
-def test_should_percent_decode_and_keep_slovak_letters() -> None:
-    assert ids.source_id_from_url("https://www.mfsr.sk/files/archiv/2013/Pou%C4%8Denie%20DP.pdf") == "files_archiv_2013_Poučenie_DP"
-
-
-@pytest.mark.unit
-def test_should_cap_a_long_path_at_200_characters_with_a_hash_suffix() -> None:
-    long_a = ids.source_id_from_url("https://x.sk/" + "a" * 300 + "/one.pdf")
-    long_b = ids.source_id_from_url("https://x.sk/" + "a" * 300 + "/two.pdf")
-
-    assert len(long_a) == 200
-    assert long_a != long_b
-    assert re.search(r"_[0-9a-f]{8}$", long_a)
-    assert ids.is_safe_source_id(long_a)
 
 
 @pytest.mark.unit
@@ -67,15 +33,51 @@ def test_should_accept_slugs(good: str) -> None:
 
 
 @pytest.mark.unit
-def test_the_715_recorded_mfsr_urls_give_715_distinct_source_ids() -> None:
-    urls: list[str] = json.loads((FIXTURES / "mfsr-urls.json").read_text(encoding="utf-8"))
+def test_the_module_holds_no_url_to_id_rule() -> None:
+    public = {name for name, _ in inspect.getmembers(ids, inspect.isfunction)}
 
-    new_ids = [ids.source_id_from_url(url) for url in urls]
-    # CONTRAST: the legacy rule (slug of the file stem only) collapses these same URLs to 645 ids, so 70 documents overwrote one another
-    legacy_stems = {re.sub(r"[^A-Za-z0-9_.-]+", "_", Path(urlparse(url).path).stem) for url in urls}
+    assert public == {"is_safe_source_id", "check_source_id"}
+    assert "hashlib" not in vars(ids)
+    assert "urlparse" not in vars(ids)
 
-    assert len(urls) == 715
-    assert len(set(urls)) == 715
-    assert len(legacy_stems) == 645
-    assert len(set(new_ids)) == 715
-    assert all(ids.is_safe_source_id(item) for item in new_ids)
+
+@pytest.mark.unit
+def test_the_entry_keeps_the_sidecar_source_id_whatever_the_pdf_url_says(tmp_path: Path) -> None:
+    # the URL path would slug to "files_archiv_35_Priloha_c_1"; the grab said otherwise and the convert class must not second-guess it
+    meta = tmp_path / "grab_assigned_id.meta.json"
+    meta.write_text(
+        json.dumps(
+            {
+                "fonte": "mfsr-spravodajca",
+                "source_id": "grab_assigned_id",
+                "pdf_file": "grab_assigned_id.pdf",
+                "pdf_url": "https://www.mfsr.sk/files/archiv/35/Priloha_c_1.pdf",
+                "title": "Príloha",
+            },
+        ),
+        encoding="utf-8",
+    )
+    side = sidecar.read_sidecar(meta)
+
+    built: Any = build_entry(side, "Text prílohy " * 30, "pdf")
+
+    assert isinstance(built, Entry)
+    assert built.source_id == "grab_assigned_id"
+    assert built.source_url == "https://www.mfsr.sk/files/archiv/35/Priloha_c_1.pdf"
+
+
+@pytest.mark.unit
+def test_a_sidecar_whose_source_id_differs_from_its_file_name_is_skipped_not_repaired(tmp_path: Path) -> None:
+    directory = tmp_path / "raw" / "pdf_mfsr-spravodajca_2026"
+    directory.mkdir(parents=True)
+    (directory / "a.meta.json").write_text(
+        json.dumps({"fonte": "mfsr-spravodajca", "source_id": "files_archiv_35_Priloha_c_1", "pdf_file": "a.pdf", "pdf_url": "https://www.mfsr.sk/files/archiv/35/Priloha_c_1.pdf"}),
+        encoding="utf-8",
+    )
+    (directory / "a.pdf").write_bytes((FIXTURES / "mfsr-poucenie.pdf").read_bytes())
+    result_plan = plan.Plan(item_id="pdf:mfsr-spravodajca:2026", fonte="mfsr-spravodajca")
+
+    plan._convert_document(result_plan, "a", directory / "a.meta.json", lambda _p: "")
+
+    assert [(row["item_ref"], row["reason"]) for row in result_plan.skipped] == [("a", "bad_sidecar")]
+    assert result_plan.documents == []
